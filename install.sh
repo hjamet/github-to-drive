@@ -138,46 +138,7 @@ EOF
     ok "Google Drive authorized — folder 'github' ready"
 fi
 
-# ── 8. Webhook configuration ─────────────────────────────────────────────
-# Try to read existing webhook URL from config
-EXISTING_WEBHOOK_URL=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json')).get('webhook_url', ''))" 2>/dev/null || echo "")
-
-if [ -n "$EXISTING_WEBHOOK_URL" ]; then
-    WEBHOOK_URL="$EXISTING_WEBHOOK_URL"
-    ok "Webhook URL found in existing config: $WEBHOOK_URL (reusing)"
-else
-    echo ""
-    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-    printf '%s  Step 3/3 — Webhook Setup%s\n' "$BOLD" "$NC"
-    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-    echo ""
-    echo "To sync on every push, we need your server's public URL."
-    echo "The webhook server will listen on port 9867."
-    echo ""
-    printf '  Example: %shttp://123.45.67.89:9867%s\n' "$BLUE" "$NC"
-    printf '  Example: %shttps://myserver.example.com:9867%s\n' "$BLUE" "$NC"
-    echo ""
-    SERVER_URL=$(ask "Your server's public URL (with port): ")
-    [ -z "$SERVER_URL" ] && die "Server URL is required."
-    # Strip trailing slash
-    SERVER_URL="${SERVER_URL%/}"
-    WEBHOOK_URL="${SERVER_URL}/webhook"
-
-    # Save webhook URL to config
-    python3 -c "
-import json
-cfg = json.load(open('$CONFIG_DIR/config.json'))
-cfg['webhook_url'] = '$WEBHOOK_URL'
-json.dump(cfg, open('$CONFIG_DIR/config.json', 'w'), indent=4)
-"
-fi
-
-info "Registering webhooks on all your repos…"
-"$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" \
-    --register-webhooks --webhook-url "$WEBHOOK_URL"
-ok "Webhooks registered"
-
-# ── 9. Install systemd user service ──────────────────────────────────────
+# ── 8. Install systemd user service ──────────────────────────────────────
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_DIR"
 
@@ -215,8 +176,8 @@ echo "  View logs:       journalctl --user -u $SERVICE_NAME -f"
 echo "  Config dir:      $CONFIG_DIR"
 echo "  Install dir:     $INSTALL_DIR"
 echo ""
-echo "  Webhooks are registered — syncs trigger on every push."
-echo "  Fallback full sync runs every 6 hours."
-echo "  Webhook endpoint: $WEBHOOK_URL"
+echo "  The service polls GitHub every 60 seconds for new commits."
+echo "  New repos are detected automatically."
 echo "  Your Markdown files appear in the 'github' folder on Google Drive."
 echo ""
+
