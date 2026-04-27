@@ -129,7 +129,38 @@ echo ""
 "$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" --setup < /dev/tty
 ok "Google Drive authorized — folder 'github' ready"
 
-# ── 8. Install systemd user service ──────────────────────────────────────
+# ── 8. Webhook configuration ─────────────────────────────────────────────
+echo ""
+printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+printf '%s  Step 3/3 — Webhook Setup%s\n' "$BOLD" "$NC"
+printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+echo ""
+echo "To sync on every push, we need your server's public URL."
+echo "The webhook server will listen on port 9867."
+echo ""
+printf '  Example: %shttp://123.45.67.89:9867%s\n' "$BLUE" "$NC"
+printf '  Example: %shttps://myserver.example.com:9867%s\n' "$BLUE" "$NC"
+echo ""
+SERVER_URL=$(ask "Your server's public URL (with port): ")
+[ -z "$SERVER_URL" ] && die "Server URL is required."
+# Strip trailing slash
+SERVER_URL="${SERVER_URL%/}"
+WEBHOOK_URL="${SERVER_URL}/webhook"
+
+# Save webhook URL to config
+python3 -c "
+import json
+cfg = json.load(open('$CONFIG_DIR/config.json'))
+cfg['webhook_url'] = '$WEBHOOK_URL'
+json.dump(cfg, open('$CONFIG_DIR/config.json', 'w'), indent=4)
+"
+
+info "Registering webhooks on all your repos…"
+"$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" \
+    --register-webhooks --webhook-url "$WEBHOOK_URL"
+ok "Webhooks registered"
+
+# ── 9. Install systemd user service ──────────────────────────────────────
 SYSTEMD_DIR="$HOME/.config/systemd/user"
 mkdir -p "$SYSTEMD_DIR"
 
@@ -167,6 +198,8 @@ echo "  View logs:       journalctl --user -u $SERVICE_NAME -f"
 echo "  Config dir:      $CONFIG_DIR"
 echo "  Install dir:     $INSTALL_DIR"
 echo ""
-echo "  The service will sync your repos every hour."
-echo "  Your Markdown files will appear in the 'github' folder on Google Drive."
+echo "  Webhooks are registered — syncs trigger on every push."
+echo "  Fallback full sync runs every 6 hours."
+echo "  Webhook endpoint: $WEBHOOK_URL"
+echo "  Your Markdown files appear in the 'github' folder on Google Drive."
 echo ""

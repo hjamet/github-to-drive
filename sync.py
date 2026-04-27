@@ -5,14 +5,19 @@ as structured Markdown files into a 'github' folder on Google Drive.
 """
 
 import argparse
+import hashlib
+import hmac
 import io
 import json
 import logging
 import os
+import secrets
 import sys
 import tarfile
+import threading
 import time
 from datetime import datetime, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
 
 import requests
@@ -33,7 +38,9 @@ TOKEN_FILE = CONFIG_DIR / "token.json"
 STATE_FILE = CONFIG_DIR / "state.json"
 
 SCOPES = ["https://www.googleapis.com/auth/drive.file"]
-POLL_INTERVAL_SECONDS = 3600  # 1 hour
+WEBHOOK_PORT = 9867
+WEBHOOK_SECRET_FILE = CONFIG_DIR / "webhook_secret"
+FALLBACK_INTERVAL_SECONDS = 21600  # 6 hours
 
 CODE_EXTENSIONS = {
     ".py", ".js", ".ts", ".jsx", ".tsx", ".tex", ".md", ".html", ".css",
@@ -389,47 +396,202 @@ def save_state(state):
 
 
 # ---------------------------------------------------------------------------
-# Sync loop
+# Sync logic
 # ---------------------------------------------------------------------------
 
-def sync_once(github_token, drive_service, folder_id):
+def sync_repo(github_token, drive_service, folder_id, owner, repo_name,
+              default_branch="main"):
+    """Sync a single repo to Google Drive."""
     username = get_github_user(github_token)
-    repos = list_repos(github_token)
     state = load_state()
-    log.info("Found %d repos for user '%s'", len(repos), username)
+    full = f"{owner}/{repo_name}"
 
-    synced = 0
+    sha = get_latest_commit_sha(github_token, owner, repo_name, default_branch)
+    if not sha:
+        log.info("Skipping %s (no commits)", full)
+        return
+    if state.get(full) == sha:
+        log.info("Skipping %s (already synced %s)", full, sha[:7])
+        return
+
+    log.info("Syncing %s (commit %s)", full, sha[:7])
+    files = download_repo_files(github_token, owner, repo_name, ref=sha)
+    issues = get_open_issues(github_token, owner, repo_name, username)
+    md = generate_markdown(repo_name, full, sha, files, issues)
+    upload_or_update_file(drive_service, folder_id, f"{repo_name}.md", md)
+
+    state[full] = sha
+    save_state(state)
+    log.info("Synced %s (%s)", full, sha[:7])
+
+
+def sync_all(github_token, drive_service, folder_id):
+    """Full sync of all repos (fallback)."""
+    repos = list_repos(github_token)
+    log.info("Full sync: checking %d repos", len(repos))
     for repo in repos:
+        sync_repo(
+            github_token, drive_service, folder_id,
+            repo["owner"]["login"], repo["name"],
+            repo.get("default_branch", "main"),
+        )
+
+
+# ---------------------------------------------------------------------------
+# Webhook server
+# ---------------------------------------------------------------------------
+
+def get_webhook_secret():
+    """Load or create a persistent webhook secret."""
+    if WEBHOOK_SECRET_FILE.exists():
+        return WEBHOOK_SECRET_FILE.read_text().strip()
+    secret = secrets.token_hex(32)
+    WEBHOOK_SECRET_FILE.write_text(secret)
+    os.chmod(str(WEBHOOK_SECRET_FILE), 0o600)
+    return secret
+
+
+def verify_signature(payload, signature, secret):
+    """Verify GitHub webhook HMAC-SHA256 signature."""
+    if not signature or not signature.startswith("sha256="):
+        return False
+    expected = hmac.new(
+        secret.encode(), payload, hashlib.sha256
+    ).hexdigest()
+    return hmac.compare_digest(f"sha256={expected}", signature)
+
+
+def make_webhook_handler(github_token, drive_service, folder_id, secret):
+    """Factory that returns a request handler class with injected deps."""
+
+    class WebhookHandler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers.get("Content-Length", 0))
+            payload = self.rfile.read(content_length)
+
+            # Verify signature
+            sig = self.headers.get("X-Hub-Signature-256", "")
+            if not verify_signature(payload, sig, secret):
+                log.warning("Webhook signature mismatch — rejecting")
+                self.send_response(403)
+                self.end_headers()
+                return
+
+            event = self.headers.get("X-GitHub-Event", "")
+            if event == "ping":
+                log.info("Webhook ping received")
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"pong")
+                return
+
+            if event != "push":
+                self.send_response(204)
+                self.end_headers()
+                return
+
+            # Parse push event
+            data = json.loads(payload)
+            repo_name = data["repository"]["name"]
+            owner = data["repository"]["owner"]["login"]
+            branch = data["repository"].get("default_branch", "main")
+
+            log.info("Push webhook received for %s/%s", owner, repo_name)
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ok")
+
+            # Sync in a separate thread to not block the response
+            threading.Thread(
+                target=sync_repo,
+                args=(github_token, drive_service, folder_id,
+                      owner, repo_name, branch),
+                daemon=True,
+            ).start()
+
+        def log_message(self, fmt, *args):
+            # Route http.server logs through our logger
+            log.debug(fmt, *args)
+
+    return WebhookHandler
+
+
+# ---------------------------------------------------------------------------
+# Webhook registration
+# ---------------------------------------------------------------------------
+
+def register_webhooks(github_token, webhook_url, secret):
+    """Register a push webhook on all owned repos (idempotent)."""
+    repos = list_repos(github_token)
+    registered = 0
+
+    for repo in repos:
+        owner = repo["owner"]["login"]
         name = repo["name"]
         full = repo["full_name"]
-        owner = repo["owner"]["login"]
-        branch = repo.get("default_branch", "main")
 
-        sha = get_latest_commit_sha(github_token, owner, name, branch)
-        if not sha:
+        # Check existing webhooks
+        try:
+            resp = _gh_get(f"/repos/{owner}/{name}/hooks", github_token)
+            hooks = resp.json()
+        except Exception:
+            log.warning("Cannot list hooks for %s (permissions?), skipping", full)
             continue
-        if state.get(full) == sha:
+
+        # Skip if webhook already registered
+        already = any(
+            h.get("config", {}).get("url") == webhook_url
+            for h in hooks
+        )
+        if already:
             continue
 
-        log.info("Syncing %s (commit %s)", full, sha[:7])
+        # Create webhook
+        payload = {
+            "name": "web",
+            "active": True,
+            "events": ["push"],
+            "config": {
+                "url": webhook_url,
+                "content_type": "json",
+                "secret": secret,
+                "insecure_ssl": "0",
+            },
+        }
+        headers = {
+            "Authorization": f"token {github_token}",
+            "Accept": "application/vnd.github.v3+json",
+        }
+        resp = requests.post(
+            f"https://api.github.com/repos/{owner}/{name}/hooks",
+            headers=headers, json=payload, timeout=15,
+        )
+        if resp.status_code == 201:
+            registered += 1
+            log.info("Webhook registered on %s", full)
+        else:
+            log.warning("Failed to register webhook on %s: %s", full, resp.text)
 
-        files = download_repo_files(github_token, owner, name, ref=sha)
-        issues = get_open_issues(github_token, owner, name, username)
-        md = generate_markdown(name, full, sha, files, issues)
-        upload_or_update_file(drive_service, folder_id, f"{name}.md", md)
+    log.info("Webhook registration done: %d new hooks", registered)
 
-        state[full] = sha
-        save_state(state)
-        synced += 1
 
-    log.info("Sync done: %d/%d repos updated", synced, len(repos))
-
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(description="GitHub → Drive sync")
     parser.add_argument(
         "--setup", action="store_true",
         help="Run interactive OAuth2 setup (used by install.sh)",
+    )
+    parser.add_argument(
+        "--register-webhooks", action="store_true",
+        help="Register push webhooks on all repos (used by install.sh)",
+    )
+    parser.add_argument(
+        "--webhook-url", type=str, default=None,
+        help="Public URL for the webhook endpoint (e.g. http://1.2.3.4:9867/webhook)",
     )
     args = parser.parse_args()
 
@@ -443,17 +605,45 @@ def main():
 
     config = json.loads(CONFIG_FILE.read_text())
     github_token = config["github_token"]
+    secret = get_webhook_secret()
 
+    if args.register_webhooks:
+        if not args.webhook_url:
+            log.error("--webhook-url is required with --register-webhooks")
+            sys.exit(1)
+        register_webhooks(github_token, args.webhook_url, secret)
+        return
+
+    # Authenticate with Google Drive
     creds = get_drive_credentials()
     drive_service = build("drive", "v3", credentials=creds)
     folder_id = get_or_create_folder(drive_service)
 
-    log.info("Starting sync loop (every %ds)", POLL_INTERVAL_SECONDS)
-    while True:
-        sync_once(github_token, drive_service, folder_id)
-        log.info("Next sync in %ds…", POLL_INTERVAL_SECONDS)
-        time.sleep(POLL_INTERVAL_SECONDS)
+    # Initial full sync
+    log.info("Running initial full sync…")
+    sync_all(github_token, drive_service, folder_id)
+
+    # Background fallback sync thread
+    def fallback_loop():
+        while True:
+            time.sleep(FALLBACK_INTERVAL_SECONDS)
+            log.info("Fallback sync triggered (every %dh)",
+                     FALLBACK_INTERVAL_SECONDS // 3600)
+            sync_all(github_token, drive_service, folder_id)
+
+    fallback_thread = threading.Thread(target=fallback_loop, daemon=True)
+    fallback_thread.start()
+
+    # Start webhook server
+    handler = make_webhook_handler(
+        github_token, drive_service, folder_id, secret
+    )
+    server = HTTPServer(("0.0.0.0", WEBHOOK_PORT), handler)
+    log.info("Webhook server listening on port %d", WEBHOOK_PORT)
+    log.info("Fallback full sync every %dh", FALLBACK_INTERVAL_SECONDS // 3600)
+    server.serve_forever()
 
 
 if __name__ == "__main__":
     main()
+
