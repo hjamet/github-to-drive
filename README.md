@@ -14,7 +14,6 @@ curl -fsSL "https://raw.githubusercontent.com/hjamet/github-to-drive/main/instal
 Le script d'installation vous guidera pour :
 1. Entrer votre **GitHub Personal Access Token** (scope `repo`)
 2. Configurer l'accès **Google Drive** via OAuth2 (une seule fois)
-3. Entrer l'**URL publique** de votre serveur pour les webhooks
 
 Le service démarre automatiquement et survit aux redémarrages. En cas de mise à jour, relancez simplement la commande `curl` ci-dessus — le service existant sera arrêté proprement avant la réinstallation.
 
@@ -29,7 +28,7 @@ Le service démarre automatiquement et survit aux redémarrages. En cas de mise 
 
 ### Cœur du système
 
-Le script `sync.py` écoute les webhooks GitHub (push events) et se déclenche **à chaque push**. Un sync complet de fallback tourne toutes les 6 heures. Opérations :
+Le script `sync.py` interroge l'API GitHub **toutes les 60 secondes** pour détecter les nouveaux commits. Les nouveaux repos sont détectés automatiquement. Opérations :
 
 1. **Liste tous les repos** de l'utilisateur GitHub authentifié
 2. **Détecte les nouveaux commits** en comparant les SHA avec un fichier d'état local
@@ -49,10 +48,9 @@ Le script `sync.py` écoute les webhooks GitHub (push events) et se déclenche *
 
 ```
 ~/.config/github-to-drive/
-├── config.json          # GitHub token + webhook URL
+├── config.json          # GitHub token
 ├── credentials.json     # OAuth2 client credentials (Google Cloud)
 ├── token.json           # Refresh token OAuth2 (permanent)
-├── webhook_secret       # Secret HMAC pour vérifier les webhooks
 └── state.json           # Dernier SHA vu par repo
 ```
 
