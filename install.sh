@@ -11,17 +11,17 @@ INSTALL_DIR="$HOME/.local/share/github-to-drive"
 CONFIG_DIR="$HOME/.config/github-to-drive"
 SERVICE_NAME="github-to-drive"
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
+RED=$'\033[0;31m'; GREEN=$'\033[0;32m'; YELLOW=$'\033[1;33m'
+BLUE=$'\033[0;34m'; BOLD=$'\033[1m'; NC=$'\033[0m'
 
-info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
-ok()    { echo -e "${GREEN}[OK]${NC}   $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
-die()   { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+info()  { printf '%s[INFO]%s %s\n' "$BLUE" "$NC" "$*"; }
+ok()    { printf '%s[OK]%s   %s\n' "$GREEN" "$NC" "$*"; }
+warn()  { printf '%s[WARN]%s %s\n' "$YELLOW" "$NC" "$*"; }
+die()   { printf '%s[ERROR]%s %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
 
 # When piped via curl, stdin is the pipe — use /dev/tty for prompts
-ask()      { echo -en "${YELLOW}$1${NC}" > /dev/tty; read -r REPLY < /dev/tty; echo "$REPLY"; }
-ask_secret() { echo -en "${YELLOW}$1${NC}" > /dev/tty; read -rs REPLY < /dev/tty; echo "" > /dev/tty; echo "$REPLY"; }
+ask()      { printf '%s%s%s' "$YELLOW" "$1" "$NC" > /dev/tty; read -r REPLY < /dev/tty; echo "$REPLY"; }
+ask_secret() { printf '%s%s%s' "$YELLOW" "$1" "$NC" > /dev/tty; read -rs REPLY < /dev/tty; echo "" > /dev/tty; echo "$REPLY"; }
 
 # ── 1. Prerequisites ─────────────────────────────────────────────────────
 info "Checking prerequisites…"
@@ -40,10 +40,11 @@ fi
 # ── 3. Create directories ────────────────────────────────────────────────
 mkdir -p "$INSTALL_DIR" "$CONFIG_DIR"
 
-# ── 4. Download project files ────────────────────────────────────────────
+# ── 4. Download project files (cache-bust with timestamp) ────────────────
 info "Downloading latest files…"
-curl -fsSL "$REPO_RAW/sync.py"           -o "$INSTALL_DIR/sync.py"
-curl -fsSL "$REPO_RAW/requirements.txt"  -o "$INSTALL_DIR/requirements.txt"
+CB="?$(date +%s)"
+curl -fsSL "${REPO_RAW}/sync.py${CB}"           -o "$INSTALL_DIR/sync.py"
+curl -fsSL "${REPO_RAW}/requirements.txt${CB}"  -o "$INSTALL_DIR/requirements.txt"
 ok "Files downloaded to $INSTALL_DIR"
 
 # ── 5. Python venv + dependencies ────────────────────────────────────────
@@ -55,9 +56,9 @@ ok "Virtual environment ready"
 
 # ── 6. GitHub token ──────────────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}══════════════════════════════════════${NC}"
-echo -e "${BOLD}  Step 1/2 — GitHub Configuration${NC}"
-echo -e "${BOLD}══════════════════════════════════════${NC}"
+printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+printf '%s  Step 1/2 — GitHub Configuration%s\n' "$BOLD" "$NC"
+printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
 echo ""
 echo "You need a Personal Access Token with the 'repo' scope."
 echo "Create one at: https://github.com/settings/tokens/new"
@@ -82,20 +83,20 @@ chmod 600 "$CONFIG_DIR/config.json"
 
 # ── 7. Google Drive OAuth2 ───────────────────────────────────────────────
 echo ""
-echo -e "${BOLD}══════════════════════════════════════${NC}"
-echo -e "${BOLD}  Step 2/2 — Google Drive Setup${NC}"
-echo -e "${BOLD}══════════════════════════════════════${NC}"
+printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+printf '%s  Step 2/2 — Google Drive Setup%s\n' "$BOLD" "$NC"
+printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
 echo ""
 echo "Follow these steps to enable Google Drive access:"
 echo ""
-echo "  1. Go to ${BLUE}https://console.cloud.google.com${NC}"
+printf '  1. Go to %shttps://console.cloud.google.com%s\n' "$BLUE" "$NC"
 echo "  2. Create a new project (or use an existing one)"
-echo "  3. Enable the ${BOLD}Google Drive API${NC}:"
+printf '  3. Enable the %sGoogle Drive API%s:\n' "$BOLD" "$NC"
 echo "     → APIs & Services → Library → search 'Google Drive API' → Enable"
-echo "  4. Create ${BOLD}OAuth2 credentials${NC}:"
+printf '  4. Create %sOAuth2 credentials%s:\n' "$BOLD" "$NC"
 echo "     → APIs & Services → Credentials"
 echo "     → Create Credentials → OAuth client ID"
-echo "     → Application type: ${BOLD}Desktop app${NC}"
+printf '     → Application type: %sDesktop app%s\n' "$BOLD" "$NC"
 echo ""
 echo "  Then copy the Client ID and Client Secret shown on screen."
 echo ""
@@ -159,7 +160,7 @@ loginctl enable-linger "$(whoami)" 2>/dev/null || true
 
 # ── Done ─────────────────────────────────────────────────────────────────
 echo ""
-echo -e "${GREEN}${BOLD}✅ Installation complete!${NC}"
+printf '%s%s✅ Installation complete!%s\n' "$GREEN" "$BOLD" "$NC"
 echo ""
 echo "  Service status:  systemctl --user status $SERVICE_NAME"
 echo "  View logs:       journalctl --user -u $SERVICE_NAME -f"
