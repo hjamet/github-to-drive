@@ -96,16 +96,29 @@ echo "  4. Create ${BOLD}OAuth2 credentials${NC}:"
 echo "     → APIs & Services → Credentials"
 echo "     → Create Credentials → OAuth client ID"
 echo "     → Application type: ${BOLD}Desktop app${NC}"
-echo "     → Download the JSON file"
 echo ""
-CREDS_PATH=$(ask "Path to the downloaded credentials JSON file: ")
-CREDS_PATH="${CREDS_PATH/#\~/$HOME}"
-CREDS_PATH="${CREDS_PATH//\"/}"       # strip accidental quotes
-CREDS_PATH="$(echo -e "$CREDS_PATH" | xargs)"  # trim whitespace
-[ ! -f "$CREDS_PATH" ] && die "File not found: $CREDS_PATH"
-cp "$CREDS_PATH" "$CONFIG_DIR/credentials.json"
+echo "  Then copy the Client ID and Client Secret shown on screen."
+echo ""
+CLIENT_ID=$(ask "Client ID: ")
+[ -z "$CLIENT_ID" ] && die "Client ID is required."
+CLIENT_SECRET=$(ask_secret "Client Secret: ")
+[ -z "$CLIENT_SECRET" ] && die "Client Secret is required."
+
+# Generate credentials.json from client_id + client_secret
+cat > "$CONFIG_DIR/credentials.json" <<EOF
+{
+    "installed": {
+        "client_id": "$CLIENT_ID",
+        "client_secret": "$CLIENT_SECRET",
+        "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        "redirect_uris": ["http://localhost"]
+    }
+}
+EOF
 chmod 600 "$CONFIG_DIR/credentials.json"
-ok "Credentials copied"
+ok "OAuth2 credentials configured"
 
 info "Starting Google Drive authorization…"
 echo ""
