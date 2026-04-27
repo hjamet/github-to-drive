@@ -55,58 +55,66 @@ python3 -m venv "$INSTALL_DIR/venv"
 ok "Virtual environment ready"
 
 # ── 6. GitHub token ──────────────────────────────────────────────────────
-echo ""
-printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-printf '%s  Step 1/2 — GitHub Configuration%s\n' "$BOLD" "$NC"
-printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-echo ""
-echo "You need a Personal Access Token with the 'repo' scope."
-echo "Create one at: https://github.com/settings/tokens/new"
-echo ""
-GH_TOKEN=$(ask_secret "Paste your GitHub token: ")
-[ -z "$GH_TOKEN" ] && die "GitHub token is required."
+if [ -f "$CONFIG_DIR/config.json" ]; then
+    GH_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json'))['github_token'])")
+    ok "GitHub token found in existing config (reusing)"
+else
+    echo ""
+    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+    printf '%s  Step 1/3 — GitHub Configuration%s\n' "$BOLD" "$NC"
+    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+    echo ""
+    echo "You need a Personal Access Token with the 'repo' scope."
+    echo "Create one at: https://github.com/settings/tokens/new"
+    echo ""
+    GH_TOKEN=$(ask_secret "Paste your GitHub token: ")
+    [ -z "$GH_TOKEN" ] && die "GitHub token is required."
 
-# Validate
-HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-    -H "Authorization: token $GH_TOKEN" https://api.github.com/user)
-[ "$HTTP_CODE" != "200" ] && die "Invalid GitHub token (HTTP $HTTP_CODE)."
-GH_USER=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/user | python3 -c "import sys,json; print(json.load(sys.stdin)['login'])")
-ok "Authenticated as $GH_USER"
+    # Validate
+    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: token $GH_TOKEN" https://api.github.com/user)
+    [ "$HTTP_CODE" != "200" ] && die "Invalid GitHub token (HTTP $HTTP_CODE)."
+    GH_USER=$(curl -s -H "Authorization: token $GH_TOKEN" https://api.github.com/user | python3 -c "import sys,json; print(json.load(sys.stdin)['login'])")
+    ok "Authenticated as $GH_USER"
 
-# Save config
-cat > "$CONFIG_DIR/config.json" <<EOF
+    # Save config
+    cat > "$CONFIG_DIR/config.json" <<EOF
 {
     "github_token": "$GH_TOKEN"
 }
 EOF
-chmod 600 "$CONFIG_DIR/config.json"
+    chmod 600 "$CONFIG_DIR/config.json"
+fi
 
 # ── 7. Google Drive OAuth2 ───────────────────────────────────────────────
-echo ""
-printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-printf '%s  Step 2/2 — Google Drive Setup%s\n' "$BOLD" "$NC"
-printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-echo ""
-echo "Follow these steps to enable Google Drive access:"
-echo ""
-printf '  1. Go to %shttps://console.cloud.google.com%s\n' "$BLUE" "$NC"
-echo "  2. Create a new project (or use an existing one)"
-printf '  3. Enable the %sGoogle Drive API%s:\n' "$BOLD" "$NC"
-echo "     → APIs & Services → Library → search 'Google Drive API' → Enable"
-printf '  4. Create %sOAuth2 credentials%s:\n' "$BOLD" "$NC"
-echo "     → APIs & Services → Credentials"
-echo "     → Create Credentials → OAuth client ID"
-printf '     → Application type: %sDesktop app%s\n' "$BOLD" "$NC"
-echo ""
-echo "  Then copy the Client ID and Client Secret shown on screen."
-echo ""
-CLIENT_ID=$(ask "Client ID: ")
-[ -z "$CLIENT_ID" ] && die "Client ID is required."
-CLIENT_SECRET=$(ask_secret "Client Secret: ")
-[ -z "$CLIENT_SECRET" ] && die "Client Secret is required."
+if [ -f "$CONFIG_DIR/token.json" ] && [ -f "$CONFIG_DIR/credentials.json" ]; then
+    ok "Google Drive credentials found (reusing)"
+else
+    echo ""
+    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+    printf '%s  Step 2/3 — Google Drive Setup%s\n' "$BOLD" "$NC"
+    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+    echo ""
+    echo "Follow these steps to enable Google Drive access:"
+    echo ""
+    printf '  1. Go to %shttps://console.cloud.google.com%s\n' "$BLUE" "$NC"
+    echo "  2. Create a new project (or use an existing one)"
+    printf '  3. Enable the %sGoogle Drive API%s:\n' "$BOLD" "$NC"
+    echo "     → APIs & Services → Library → search 'Google Drive API' → Enable"
+    printf '  4. Create %sOAuth2 credentials%s:\n' "$BOLD" "$NC"
+    echo "     → APIs & Services → Credentials"
+    echo "     → Create Credentials → OAuth client ID"
+    printf '     → Application type: %sDesktop app%s\n' "$BOLD" "$NC"
+    echo ""
+    echo "  Then copy the Client ID and Client Secret shown on screen."
+    echo ""
+    CLIENT_ID=$(ask "Client ID: ")
+    [ -z "$CLIENT_ID" ] && die "Client ID is required."
+    CLIENT_SECRET=$(ask_secret "Client Secret: ")
+    [ -z "$CLIENT_SECRET" ] && die "Client Secret is required."
 
-# Generate credentials.json from client_id + client_secret
-cat > "$CONFIG_DIR/credentials.json" <<EOF
+    # Generate credentials.json from client_id + client_secret
+    cat > "$CONFIG_DIR/credentials.json" <<EOF
 {
     "installed": {
         "client_id": "$CLIENT_ID",
@@ -118,42 +126,51 @@ cat > "$CONFIG_DIR/credentials.json" <<EOF
     }
 }
 EOF
-chmod 600 "$CONFIG_DIR/credentials.json"
-ok "OAuth2 credentials configured"
+    chmod 600 "$CONFIG_DIR/credentials.json"
+    ok "OAuth2 credentials configured"
 
-info "Starting Google Drive authorization…"
-echo ""
-echo "A URL will appear below. Open it in any browser (on this machine or another)."
-echo "After authorizing, copy the redirect URL and paste it back here."
-echo ""
-"$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" --setup < /dev/tty
-ok "Google Drive authorized — folder 'github' ready"
+    info "Starting Google Drive authorization…"
+    echo ""
+    echo "A URL will appear below. Open it in any browser (on this machine or another)."
+    echo "After authorizing, copy the redirect URL and paste it back here."
+    echo ""
+    "$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" --setup < /dev/tty
+    ok "Google Drive authorized — folder 'github' ready"
+fi
 
 # ── 8. Webhook configuration ─────────────────────────────────────────────
-echo ""
-printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-printf '%s  Step 3/3 — Webhook Setup%s\n' "$BOLD" "$NC"
-printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
-echo ""
-echo "To sync on every push, we need your server's public URL."
-echo "The webhook server will listen on port 9867."
-echo ""
-printf '  Example: %shttp://123.45.67.89:9867%s\n' "$BLUE" "$NC"
-printf '  Example: %shttps://myserver.example.com:9867%s\n' "$BLUE" "$NC"
-echo ""
-SERVER_URL=$(ask "Your server's public URL (with port): ")
-[ -z "$SERVER_URL" ] && die "Server URL is required."
-# Strip trailing slash
-SERVER_URL="${SERVER_URL%/}"
-WEBHOOK_URL="${SERVER_URL}/webhook"
+# Try to read existing webhook URL from config
+EXISTING_WEBHOOK_URL=$(python3 -c "import json; print(json.load(open('$CONFIG_DIR/config.json')).get('webhook_url', ''))" 2>/dev/null || echo "")
 
-# Save webhook URL to config
-python3 -c "
+if [ -n "$EXISTING_WEBHOOK_URL" ]; then
+    WEBHOOK_URL="$EXISTING_WEBHOOK_URL"
+    ok "Webhook URL found in existing config: $WEBHOOK_URL (reusing)"
+else
+    echo ""
+    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+    printf '%s  Step 3/3 — Webhook Setup%s\n' "$BOLD" "$NC"
+    printf '%s══════════════════════════════════════%s\n' "$BOLD" "$NC"
+    echo ""
+    echo "To sync on every push, we need your server's public URL."
+    echo "The webhook server will listen on port 9867."
+    echo ""
+    printf '  Example: %shttp://123.45.67.89:9867%s\n' "$BLUE" "$NC"
+    printf '  Example: %shttps://myserver.example.com:9867%s\n' "$BLUE" "$NC"
+    echo ""
+    SERVER_URL=$(ask "Your server's public URL (with port): ")
+    [ -z "$SERVER_URL" ] && die "Server URL is required."
+    # Strip trailing slash
+    SERVER_URL="${SERVER_URL%/}"
+    WEBHOOK_URL="${SERVER_URL}/webhook"
+
+    # Save webhook URL to config
+    python3 -c "
 import json
 cfg = json.load(open('$CONFIG_DIR/config.json'))
 cfg['webhook_url'] = '$WEBHOOK_URL'
 json.dump(cfg, open('$CONFIG_DIR/config.json', 'w'), indent=4)
 "
+fi
 
 info "Registering webhooks on all your repos…"
 "$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" \
