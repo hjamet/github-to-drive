@@ -107,8 +107,12 @@ cp "$CREDS_PATH" "$CONFIG_DIR/credentials.json"
 chmod 600 "$CONFIG_DIR/credentials.json"
 ok "Credentials copied"
 
-info "Opening your browser for Google authorization…"
-"$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" --setup
+info "Starting Google Drive authorization…"
+echo ""
+echo "A URL will appear below. Open it in any browser (on this machine or another)."
+echo "After authorizing, copy the redirect URL and paste it back here."
+echo ""
+"$INSTALL_DIR/venv/bin/python3" "$INSTALL_DIR/sync.py" --setup < /dev/tty
 ok "Google Drive authorized — folder 'github' ready"
 
 # ── 8. Install systemd user service ──────────────────────────────────────

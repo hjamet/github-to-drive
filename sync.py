@@ -95,16 +95,53 @@ def get_drive_credentials():
 
 
 def run_oauth_setup():
-    """Run the interactive OAuth2 flow (called during install)."""
+    """Run the interactive OAuth2 flow (called during install).
+
+    Supports headless servers: prints an authorization URL that the user
+    opens on any machine with a browser.  After granting access the browser
+    redirects to ``http://localhost:1/?code=…`` which will fail to load
+    (no server listening) — the user simply copies the full URL from the
+    address bar and pastes it here.
+    """
     if not CREDENTIALS_FILE.exists():
         raise RuntimeError(f"credentials.json not found at {CREDENTIALS_FILE}")
 
     flow = InstalledAppFlow.from_client_secrets_file(
-        str(CREDENTIALS_FILE), SCOPES
+        str(CREDENTIALS_FILE), SCOPES,
+        redirect_uri="http://localhost:1",
     )
-    creds = flow.run_local_server(
-        port=0, access_type="offline", prompt="consent"
+
+    auth_url, _ = flow.authorization_url(
+        access_type="offline", prompt="consent",
     )
+
+    print("\n" + "=" * 60)
+    print("  Open this URL in a browser (any machine):")
+    print("=" * 60)
+    print(f"\n  {auth_url}\n")
+    print("=" * 60)
+    print("  After authorizing, the browser will try to redirect to")
+    print("  http://localhost:1/?code=…  — the page will fail to load.")
+    print("  That's normal! Copy the FULL URL from the address bar")
+    print("  and paste it below.")
+    print("=" * 60 + "\n")
+
+    redirect_response = input("Paste the full redirect URL here: ").strip()
+
+    # Extract the authorization code from the redirect URL
+    from urllib.parse import urlparse, parse_qs
+    parsed = urlparse(redirect_response)
+    qs = parse_qs(parsed.query)
+    if "code" not in qs:
+        raise RuntimeError(
+            "Could not find 'code' parameter in the URL. "
+            f"Got: {redirect_response}"
+        )
+    code = qs["code"][0]
+
+    flow.fetch_token(code=code)
+    creds = flow.credentials
+
     TOKEN_FILE.write_text(creds.to_json())
     os.chmod(str(TOKEN_FILE), 0o600)
     log.info("OAuth2 token saved to %s", TOKEN_FILE)
