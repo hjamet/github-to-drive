@@ -182,6 +182,11 @@ def get_or_create_folder(service, folder_name="github"):
 
 def upload_or_update_file(service, folder_id, filename, content):
     """Upload or update a Markdown file in the github folder on Drive."""
+    if service is None:
+        log.info("[DRY-RUN] Would upload/update '%s' on Drive (%d bytes)",
+                 filename, len(content.encode("utf-8")))
+        return
+
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
     results = (
         service.files()
@@ -227,67 +232,12 @@ def _gh_get(endpoint, token, params=None):
     return resp
 
 
+_USER_CACHE = {}
+
 def get_github_user(token):
-    return _gh_get("/user", token).json()["login"]
-
-
-_COLLAB_CACHE = {}
-
-def get_owned_orgs(token):
-    orgs = set()
-    page = 1
-    while True:
-        data = _gh_get("/user/memberships/orgs", token, params={"page": page, "per_page": 100}).json()
-        if not data or not isinstance(data, list):
-            break
-        for membership in data:
-            if membership.get("role") == "admin" and membership.get("state") == "active":
-                orgs.add(membership["organization"]["login"])
-        page += 1
-    return orgs
-
-
-def has_collaborated(token, owner, repo, username, pushed_at):
-    full = f"{owner}/{repo}"
-    if full in _COLLAB_CACHE and _COLLAB_CACHE[full]["pushed_at"] == pushed_at:
-        return _COLLAB_CACHE[full]["status"]
-        
-    try:
-        data = _gh_get(f"/repos/{owner}/{repo}/commits", token, params={"author": username, "per_page": 1}).json()
-        status = len(data) > 0
-    except requests.exceptions.HTTPError as e:
-        if e.response is not None and e.response.status_code == 409:
-            status = False
-        else:
-            raise
-            
-    _COLLAB_CACHE[full] = {"status": status, "pushed_at": pushed_at}
-    return status
-
-
-def list_repos(token):
-    username = get_github_user(token)
-    owned_orgs = get_owned_orgs(token)
-    
-    repos, page = [], 1
-    while True:
-        data = _gh_get("/user/repos", token, params={
-            "per_page": 100, "page": page,
-            "sort": "pushed", "affiliation": "owner,organization_member",
-        }).json()
-        if not data:
-            break
-            
-        for repo in data:
-            owner_login = repo["owner"]["login"]
-            if owner_login == username:
-                repos.append(repo)
-            elif owner_login in owned_orgs:
-                if has_collaborated(token, owner_login, repo["name"], username, repo.get("pushed_at")):
-                    repos.append(repo)
-                    
-        page += 1
-    return repos
+    if token not in _USER_CACHE:
+        _USER_CACHE[token] = _gh_get("/user", token).json()["login"]
+    return _USER_CACHE[token]
 
 
 def get_latest_commit_sha(token, owner, repo, branch):
@@ -463,16 +413,59 @@ def sync_repo(github_token, drive_service, folder_id, owner, repo_name,
     log.info("Synced %s (%s)", full, sha[:7])
 
 
+_REPO_INFO_CACHE = {}
+
+def get_repo_info(token, owner, repo_name):
+    full = f"{owner}/{repo_name}"
+    if full not in _REPO_INFO_CACHE:
+        _REPO_INFO_CACHE[full] = _gh_get(f"/repos/{owner}/{repo_name}", token).json()
+    return _REPO_INFO_CACHE[full]
+
+
 def sync_all(github_token, drive_service, folder_id):
-    """Full sync — check all repos for new commits."""
-    repos = list_repos(github_token)
-    log.info("Checking %d repos for changes", len(repos))
-    for repo in repos:
-        sync_repo(
-            github_token, drive_service, folder_id,
-            repo["owner"]["login"], repo["name"],
-            repo.get("default_branch", "main"),
-        )
+    """Event-driven sync — check recent user events for pushes."""
+    username = get_github_user(github_token)
+
+    log.info("Fetching recent events for %s", username)
+    try:
+        events = _gh_get(f"/users/{username}/events", github_token, params={"per_page": 50}).json()
+    except Exception as e:
+        log.error("Failed to fetch events: %s", e)
+        return
+
+    # Identify repos with recent PushEvents
+    active_repos = {}  # (owner, name) -> set of branches pushed
+    for event in events:
+        if event.get("type") == "PushEvent":
+            repo_full_name = event["repo"]["name"]
+            owner, name = repo_full_name.split("/", 1)
+
+            # Payload contains 'ref' e.g. "refs/heads/main"
+            ref = event.get("payload", {}).get("ref")
+            if ref and ref.startswith("refs/heads/"):
+                branch = ref.replace("refs/heads/", "")
+                active_repos.setdefault((owner, name), set()).add(branch)
+
+    if not active_repos:
+        log.info("No recent PushEvents found.")
+        return
+
+    log.info("Found activity in %d repositories", len(active_repos))
+    for (owner, name), branches in active_repos.items():
+        try:
+            repo_info = get_repo_info(github_token, owner, name)
+            default_branch = repo_info.get("default_branch", "main")
+
+            if default_branch in branches:
+                sync_repo(
+                    github_token, drive_service, folder_id,
+                    owner, name, default_branch
+                )
+            else:
+                log.info("Skipping %s/%s (push was to %s, not default %s)",
+                         owner, name, ", ".join(branches), default_branch)
+        except Exception as e:
+            log.error("Failed to sync %s/%s: %s", owner, name, e)
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +477,10 @@ def main():
     parser.add_argument(
         "--setup", action="store_true",
         help="Run interactive OAuth2 setup (used by install.sh)",
+    )
+    parser.add_argument(
+        "--dry-run", "--no-drive", action="store_true",
+        help="Disable Google Drive upload and authentication (test mode)",
     )
     args = parser.parse_args()
 
@@ -498,9 +495,14 @@ def main():
     config = json.loads(CONFIG_FILE.read_text())
     github_token = config["github_token"]
 
-    creds = get_drive_credentials()
-    drive_service = build("drive", "v3", credentials=creds)
-    folder_id = get_or_create_folder(drive_service)
+    if args.dry_run:
+        log.info("Dry-run mode enabled. Google Drive sync disabled.")
+        drive_service = None
+        folder_id = None
+    else:
+        creds = get_drive_credentials()
+        drive_service = build("drive", "v3", credentials=creds)
+        folder_id = get_or_create_folder(drive_service)
 
     log.info("Starting sync loop (every %ds)", POLL_INTERVAL_SECONDS)
     while True:
