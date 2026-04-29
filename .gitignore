@@ -2,3 +2,17 @@
 .cursor/mcp
 .cursor/mcp.json
 .cursor/screenshots
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+.env
+
+# Config & State (local only)
+.config/
+state.json
