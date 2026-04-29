@@ -30,7 +30,7 @@ Le service démarre automatiquement et survit aux redémarrages. En cas de mise 
 
 Le script `sync.py` interroge l'API GitHub **toutes les 60 secondes** pour détecter les nouveaux commits sur la **branche par défaut** (généralement `main` ou `master`). Les nouveaux repos sont détectés automatiquement. Opérations :
 
-1. **Liste tous les repos** de l'utilisateur GitHub authentifié
+1. **Liste tous les repos pertinents** : les dépôts personnels de l'utilisateur, et les dépôts des organisations (à condition que l'utilisateur soit administrateur de l'organisation **ET** qu'il ait contribué au dépôt avec au moins un commit).
 2. **Détecte les nouveaux commits** sur la branche principale en comparant les SHA avec un fichier d'état local
 3. **Télécharge le tarball** de la branche par défaut de chaque repo modifié
 4. **Génère un fichier Markdown** contenant :

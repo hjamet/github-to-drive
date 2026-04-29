@@ -231,16 +231,61 @@ def get_github_user(token):
     return _gh_get("/user", token).json()["login"]
 
 
+_COLLAB_CACHE = {}
+
+def get_owned_orgs(token):
+    orgs = set()
+    page = 1
+    while True:
+        data = _gh_get("/user/memberships/orgs", token, params={"page": page, "per_page": 100}).json()
+        if not data or not isinstance(data, list):
+            break
+        for membership in data:
+            if membership.get("role") == "admin" and membership.get("state") == "active":
+                orgs.add(membership["organization"]["login"])
+        page += 1
+    return orgs
+
+
+def has_collaborated(token, owner, repo, username, pushed_at):
+    full = f"{owner}/{repo}"
+    if full in _COLLAB_CACHE and _COLLAB_CACHE[full]["pushed_at"] == pushed_at:
+        return _COLLAB_CACHE[full]["status"]
+        
+    try:
+        data = _gh_get(f"/repos/{owner}/{repo}/commits", token, params={"author": username, "per_page": 1}).json()
+        status = len(data) > 0
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 409:
+            status = False
+        else:
+            raise
+            
+    _COLLAB_CACHE[full] = {"status": status, "pushed_at": pushed_at}
+    return status
+
+
 def list_repos(token):
+    username = get_github_user(token)
+    owned_orgs = get_owned_orgs(token)
+    
     repos, page = [], 1
     while True:
         data = _gh_get("/user/repos", token, params={
             "per_page": 100, "page": page,
-            "sort": "pushed", "affiliation": "owner",
+            "sort": "pushed", "affiliation": "owner,organization_member",
         }).json()
         if not data:
             break
-        repos.extend(data)
+            
+        for repo in data:
+            owner_login = repo["owner"]["login"]
+            if owner_login == username:
+                repos.append(repo)
+            elif owner_login in owned_orgs:
+                if has_collaborated(token, owner_login, repo["name"], username, repo.get("pushed_at")):
+                    repos.append(repo)
+                    
         page += 1
     return repos
 
