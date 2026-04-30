@@ -181,13 +181,16 @@ def get_or_create_folder(service, folder_name="github"):
 
 
 def upload_or_update_file(service, folder_id, filename, content):
-    """Upload or update a Markdown file in the github folder on Drive."""
+    """Upload or update a Markdown file in the github folder on Drive, converted to a Google Doc."""
+    # We strip the .md extension to make the Google Doc title cleaner
+    doc_title = filename[:-3] if filename.endswith(".md") else filename
+
     if service is None:
-        log.info("[DRY-RUN] Would upload/update '%s' on Drive (%d bytes)",
-                 filename, len(content.encode("utf-8")))
+        log.info("[DRY-RUN] Would upload/update '%s' as Google Doc on Drive (%d bytes)",
+                 doc_title, len(content.encode("utf-8")))
         return
 
-    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
+    query = f"name='{doc_title}' and '{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false"
     results = (
         service.files()
         .list(q=query, spaces="drive", fields="files(id)")
@@ -203,13 +206,17 @@ def upload_or_update_file(service, folder_id, filename, content):
         service.files().update(
             fileId=existing[0]["id"], media_body=media
         ).execute()
-        log.info("Updated '%s' on Drive", filename)
+        log.info("Updated '%s' on Drive", doc_title)
     else:
-        metadata = {"name": filename, "parents": [folder_id]}
+        metadata = {
+            "name": doc_title, 
+            "parents": [folder_id],
+            "mimeType": "application/vnd.google-apps.document"
+        }
         service.files().create(
             body=metadata, media_body=media, fields="id"
         ).execute()
-        log.info("Created '%s' on Drive", filename)
+        log.info("Created '%s' on Drive", doc_title)
 
 
 # ---------------------------------------------------------------------------

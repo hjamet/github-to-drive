@@ -1,6 +1,6 @@
 # GitHub → Drive Sync
 
-Synchronise automatiquement **tous vos dépôts GitHub** sous forme de fichiers Markdown structurés dans un dossier `github` sur Google Drive. Chaque fichier contient l'arborescence du repo, le contenu des fichiers de code, et les issues ouvertes (hors tag `jules`).
+Synchronise automatiquement **tous vos dépôts GitHub** sous forme de documents **Google Docs** natifs (générés depuis du Markdown) dans un dossier `github` sur Google Drive. Chaque document contient l'arborescence du repo, le contenu des fichiers de code, et les issues ouvertes (hors tag `jules`).
 
 **État** : v0.1 — MVP fonctionnel  
 **Stack** : Python 3 · Google Drive API (OAuth2 `drive.file`) · GitHub REST API · systemd
@@ -33,11 +33,11 @@ Le script `sync.py` interroge l'API GitHub **toutes les 60 secondes** pour déte
 1. **Liste tous les repos pertinents** : les dépôts personnels de l'utilisateur, et les dépôts des organisations (à condition que l'utilisateur soit administrateur de l'organisation **ET** qu'il ait contribué au dépôt avec au moins un commit).
 2. **Détecte les nouveaux commits** sur la branche principale en comparant les SHA avec un fichier d'état local
 3. **Télécharge le tarball** de la branche par défaut de chaque repo modifié
-4. **Génère un fichier Markdown** contenant :
+4. **Génère le contenu Markdown** contenant :
    - L'arborescence complète du repo (tree)
    - Le contenu de chaque fichier de code (extensions : `.py`, `.js`, `.ts`, `.md`, `.tex`, `.html`, `.css`, `.sh`, `.yaml`, `.json`, `.toml`, `.go`, `.rs`, `.java`, `.c`, `.cpp`, etc.)
    - Les issues ouvertes créées par l'utilisateur, exclues si taggées `jules`
-5. **Upload le fichier** dans le dossier `github` sur Google Drive (créé automatiquement)
+5. **Upload le fichier** converti nativement en **Google Docs** dans le dossier `github` sur Google Drive (créé automatiquement)
 
 ### Flux d'authentification
 
