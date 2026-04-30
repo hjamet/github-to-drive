@@ -291,11 +291,16 @@ def list_repos(token):
 
 
 def get_latest_commit_sha(token, owner, repo, branch):
-    commits = _gh_get(
-        f"/repos/{owner}/{repo}/commits",
-        token, params={"sha": branch, "per_page": 1},
-    ).json()
-    return commits[0]["sha"] if commits else None
+    try:
+        commits = _gh_get(
+            f"/repos/{owner}/{repo}/commits",
+            token, params={"sha": branch, "per_page": 1},
+        ).json()
+        return commits[0]["sha"] if commits else None
+    except requests.exceptions.HTTPError as e:
+        if e.response is not None and e.response.status_code == 409:
+            return None
+        raise
 
 
 def download_repo_files(token, owner, repo, ref="HEAD"):
