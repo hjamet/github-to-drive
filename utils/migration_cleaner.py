@@ -8,10 +8,13 @@ files into native Google Docs.
 import argparse
 import json
 import logging
+import socket
 import sys
 from pathlib import Path
 
 import requests
+
+socket.setdefaulttimeout(300)
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
@@ -73,7 +76,7 @@ def _gh_get(endpoint, token, params=None):
         f"https://api.github.com{endpoint}",
         headers=headers,
         params=params,
-        timeout=30,
+        timeout=60,
     )
     resp.raise_for_status()
     return resp
@@ -97,7 +100,7 @@ def get_or_create_subfolder(service, parent_id, folder_name):
     results = (
         service.files()
         .list(q=query, spaces="drive", fields="files(id, name)")
-        .execute()
+        .execute(num_retries=5)
     )
     files = results.get("files", [])
 
@@ -109,7 +112,7 @@ def get_or_create_subfolder(service, parent_id, folder_name):
         "mimeType": "application/vnd.google-apps.folder",
         "parents": [parent_id]
     }
-    folder = service.files().create(body=metadata, fields="id").execute()
+    folder = service.files().create(body=metadata, fields="id").execute(num_retries=5)
     log.info("Created organization folder '%s' (id: %s)", folder_name, folder["id"])
     return folder["id"]
 
@@ -128,7 +131,7 @@ def migrate_md_file(service, file_id, file_name, target_folder_id, dry_run=False
         return
 
     # 1. Download
-    content = service.files().get_media(fileId=file_id).execute().decode("utf-8")
+    content = service.files().get_media(fileId=file_id).execute(num_retries=5).decode("utf-8")
 
     # 2. Create Google Doc
     media = MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/markdown")
@@ -137,11 +140,11 @@ def migrate_md_file(service, file_id, file_name, target_folder_id, dry_run=False
         "parents": [target_folder_id],
         "mimeType": "application/vnd.google-apps.document"
     }
-    new_file = service.files().create(body=metadata, media_body=media, fields="id").execute()
+    new_file = service.files().create(body=metadata, media_body=media, fields="id").execute(num_retries=5)
     log.info("Converted '%s' to Google Doc (id: %s)", file_name, new_file["id"])
 
     # 3. Trash original
-    service.files().update(fileId=file_id, body={"trashed": True}).execute()
+    service.files().update(fileId=file_id, body={"trashed": True}).execute(num_retries=5)
     log.info("Trashed original .md file '%s'", file_name)
 
 
@@ -152,7 +155,7 @@ def move_google_doc(service, file_id, file_name, target_folder_id, dry_run=False
         return
 
     # Retrieve current parents to remove them
-    file = service.files().get(fileId=file_id, fields="parents").execute()
+    file = service.files().get(fileId=file_id, fields="parents").execute(num_retries=5)
     previous_parents = ",".join(file.get("parents", []))
 
     # Move
@@ -161,7 +164,7 @@ def move_google_doc(service, file_id, file_name, target_folder_id, dry_run=False
         addParents=target_folder_id,
         removeParents=previous_parents,
         fields="id, parents"
-    ).execute()
+    ).execute(num_retries=5)
     log.info("Moved Google Doc '%s' to organization folder", file_name)
 
 
@@ -212,7 +215,7 @@ def get_or_create_root_folder(service, folder_name="github"):
     results = (
         service.files()
         .list(q=query, spaces="drive", fields="files(id, name)")
-        .execute()
+        .execute(num_retries=5)
     )
     files = results.get("files", [])
 
@@ -223,7 +226,7 @@ def get_or_create_root_folder(service, folder_name="github"):
         "name": folder_name,
         "mimeType": "application/vnd.google-apps.folder",
     }
-    folder = service.files().create(body=metadata, fields="id").execute()
+    folder = service.files().create(body=metadata, fields="id").execute(num_retries=5)
     return folder["id"]
 
 
@@ -263,7 +266,7 @@ def main():
             q=query,
             fields="nextPageToken, files(id, name, mimeType)",
             pageToken=page_token
-        ).execute()
+        ).execute(num_retries=5)
         files.extend(results.get("files", []))
         page_token = results.get("nextPageToken")
         if not page_token:

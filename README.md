@@ -87,6 +87,7 @@ github-to-drive/
 
 | Commande | Description |
 |----------|-------------|
+| `python3 utils/migration_cleaner.py` | Nettoie le dossier racine Google Drive et convertit les anciens `.md` en Google Docs natifs |
 | `systemctl --user status github-to-drive` | Statut du service |
 | `systemctl --user restart github-to-drive` | Redémarrer le service |
 | `journalctl --user -u github-to-drive -f` | Consulter les logs en temps réel |
