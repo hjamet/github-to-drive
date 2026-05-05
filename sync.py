@@ -148,17 +148,27 @@ def run_oauth_setup():
 
     # Create the github folder on Drive
     service = build("drive", "v3", credentials=creds)
-    folder_id = get_or_create_folder(service)
+    folder_id = get_or_create_folder(service, "github")
     log.info("Drive folder 'github' ready (id: %s)", folder_id)
     return folder_id
 
 
-def get_or_create_folder(service, folder_name="github"):
-    """Get or create the 'github' folder at Drive root."""
+def get_or_create_folder(service, folder_name="github", parent_id="root"):
+    """Get or create a folder on Drive."""
+    cache_key = (folder_name, parent_id)
+    if cache_key in _DRIVE_FOLDER_CACHE:
+        return _DRIVE_FOLDER_CACHE[cache_key]
+
+    if service is None:
+        placeholder_id = f"dry-run-id-{folder_name}"
+        log.info("[DRY-RUN] Would get or create folder '%s' (parent: %s)", folder_name, parent_id)
+        _DRIVE_FOLDER_CACHE[cache_key] = placeholder_id
+        return placeholder_id
+
     query = (
         f"name='{folder_name}' "
         f"and mimeType='application/vnd.google-apps.folder' "
-        f"and 'root' in parents and trashed=false"
+        f"and '{parent_id}' in parents and trashed=false"
     )
     results = (
         service.files()
@@ -168,16 +178,20 @@ def get_or_create_folder(service, folder_name="github"):
     files = results.get("files", [])
 
     if files:
-        log.info("Found existing folder '%s' (id: %s)", folder_name, files[0]["id"])
-        return files[0]["id"]
+        folder_id = files[0]["id"]
+        log.info("Found existing folder '%s' (id: %s, parent: %s)", folder_name, folder_id, parent_id)
+    else:
+        metadata = {
+            "name": folder_name,
+            "mimeType": "application/vnd.google-apps.folder",
+            "parents": [parent_id]
+        }
+        folder = service.files().create(body=metadata, fields="id").execute()
+        folder_id = folder["id"]
+        log.info("Created folder '%s' (id: %s, parent: %s)", folder_name, folder_id, parent_id)
 
-    metadata = {
-        "name": folder_name,
-        "mimeType": "application/vnd.google-apps.folder",
-    }
-    folder = service.files().create(body=metadata, fields="id").execute()
-    log.info("Created folder '%s' (id: %s)", folder_name, folder["id"])
-    return folder["id"]
+    _DRIVE_FOLDER_CACHE[cache_key] = folder_id
+    return folder_id
 
 
 def upload_or_update_file(service, folder_id, filename, content):
@@ -186,8 +200,8 @@ def upload_or_update_file(service, folder_id, filename, content):
     doc_title = filename[:-3] if filename.endswith(".md") else filename
 
     if service is None:
-        log.info("[DRY-RUN] Would upload/update '%s' as Google Doc on Drive (%d bytes)",
-                 doc_title, len(content.encode("utf-8")))
+        log.info("[DRY-RUN] Would upload/update '%s' as Google Doc on Drive in folder '%s' (%d bytes)",
+                 doc_title, folder_id, len(content.encode("utf-8")))
         return
 
     query = f"name='{doc_title}' and '{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false"
@@ -240,6 +254,7 @@ def _gh_get(endpoint, token, params=None):
 
 
 _USER_CACHE = {}
+_DRIVE_FOLDER_CACHE = {}
 
 def get_github_user(token):
     if token not in _USER_CACHE:
@@ -418,7 +433,10 @@ def sync_repo(github_token, drive_service, folder_id, owner, repo_name,
     files = download_repo_files(github_token, owner, repo_name, ref=sha)
     issues = get_open_issues(github_token, owner, repo_name, username)
     md = generate_markdown(repo_name, full, sha, files, issues)
-    upload_or_update_file(drive_service, folder_id, f"{repo_name}.md", md)
+
+    # Ensure owner folder exists
+    owner_folder_id = get_or_create_folder(drive_service, owner, parent_id=folder_id)
+    upload_or_update_file(drive_service, owner_folder_id, f"{repo_name}.md", md)
 
     state[full] = sha
     save_state(state)
@@ -510,11 +528,11 @@ def main():
     if args.dry_run:
         log.info("Dry-run mode enabled. Google Drive sync disabled.")
         drive_service = None
-        folder_id = None
+        folder_id = get_or_create_folder(None, "github")
     else:
         creds = get_drive_credentials()
         drive_service = build("drive", "v3", credentials=creds)
-        folder_id = get_or_create_folder(drive_service)
+        folder_id = get_or_create_folder(drive_service, "github")
 
     log.info("Starting sync loop (every %ds)", POLL_INTERVAL_SECONDS)
     while True:
