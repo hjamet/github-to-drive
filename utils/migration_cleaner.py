@@ -133,6 +133,11 @@ def migrate_md_file(service, file_id, file_name, target_folder_id, dry_run=False
     # 1. Download
     content = service.files().get_media(fileId=file_id).execute(num_retries=5).decode("utf-8")
 
+    if len(content) > 1_000_000:
+        log.warning("File '%s' exceeds Google Docs 1M characters limit (%d chars). Moving raw .md instead.", file_name, len(content))
+        move_google_doc(service, file_id, file_name, target_folder_id, dry_run)
+        return
+
     # 2. Create Google Doc
     media = MediaInMemoryUpload(content.encode("utf-8"), mimetype="text/markdown")
     metadata = {
@@ -149,9 +154,9 @@ def migrate_md_file(service, file_id, file_name, target_folder_id, dry_run=False
 
 
 def move_google_doc(service, file_id, file_name, target_folder_id, dry_run=False):
-    """Move an existing Google Doc to the target folder."""
+    """Move an existing file (Google Doc or raw file) to the target folder."""
     if dry_run:
-        log.info("[DRY-RUN] Would move Google Doc '%s' to folder %s", file_name, target_folder_id)
+        log.info("[DRY-RUN] Would move file '%s' to folder %s", file_name, target_folder_id)
         return
 
     # Retrieve current parents to remove them
@@ -165,7 +170,7 @@ def move_google_doc(service, file_id, file_name, target_folder_id, dry_run=False
         removeParents=previous_parents,
         fields="id, parents"
     ).execute(num_retries=5)
-    log.info("Moved Google Doc '%s' to organization folder", file_name)
+    log.info("Moved file '%s' to organization folder", file_name)
 
 
 def get_repo_owner(repo_name, github_token, state):

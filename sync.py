@@ -204,7 +204,17 @@ def upload_or_update_file(service, folder_id, filename, content):
                  doc_title, folder_id, len(content.encode("utf-8")))
         return
 
-    query = f"name='{doc_title}' and '{folder_id}' in parents and mimeType='application/vnd.google-apps.document' and trashed=false"
+    # Google Docs has a ~1.02 million character limit for conversion
+    is_too_large = len(content) > 1_000_000
+    if is_too_large:
+        log.warning("File '%s' exceeds Google Docs 1M characters limit (%d chars). Uploading as raw .md instead.", filename, len(content))
+        target_name = filename  # Keep .md extension
+        target_mime = "text/markdown"
+    else:
+        target_name = doc_title
+        target_mime = "application/vnd.google-apps.document"
+
+    query = f"name='{target_name}' and '{folder_id}' in parents and mimeType='{target_mime}' and trashed=false"
     results = (
         service.files()
         .list(q=query, spaces="drive", fields="files(id)")
@@ -220,17 +230,17 @@ def upload_or_update_file(service, folder_id, filename, content):
         service.files().update(
             fileId=existing[0]["id"], media_body=media
         ).execute()
-        log.info("Updated '%s' on Drive", doc_title)
+        log.info("Updated '%s' on Drive", target_name)
     else:
         metadata = {
-            "name": doc_title, 
+            "name": target_name, 
             "parents": [folder_id],
-            "mimeType": "application/vnd.google-apps.document"
+            "mimeType": target_mime
         }
         service.files().create(
             body=metadata, media_body=media, fields="id"
         ).execute()
-        log.info("Created '%s' on Drive", doc_title)
+        log.info("Created '%s' on Drive", target_name)
 
 
 # ---------------------------------------------------------------------------
