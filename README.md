@@ -1,6 +1,6 @@
 # GitHub → Drive Sync
 
-Synchronise automatiquement **tous vos dépôts GitHub** sous forme de documents **Google Docs** natifs (générés depuis du Markdown) dans un dossier `github` sur Google Drive. Chaque document contient l'arborescence du repo, le contenu des fichiers de code, et les issues ouvertes (hors tag `jules`).
+Synchronise automatiquement **tous vos dépôts GitHub** sous forme de fichiers **Markdown** (`.md`) dans un dossier `github` sur Google Drive, organisé par owner/organisation. Chaque fichier contient l'arborescence du repo, le contenu des fichiers de code, et les issues ouvertes (hors tag `jules`).
 
 **État** : v0.1 — MVP fonctionnel  
 **Stack** : Python 3 · Google Drive API (OAuth2 `drive.file`) · GitHub REST API · systemd
@@ -37,7 +37,7 @@ Le script `sync.py` interroge l'API GitHub **toutes les 60 secondes** pour déte
    - L'arborescence complète du repo (tree)
    - Le contenu de chaque fichier de code (extensions : `.py`, `.js`, `.ts`, `.md`, `.tex`, `.html`, `.css`, `.sh`, `.yaml`, `.json`, `.toml`, `.go`, `.rs`, `.java`, `.c`, `.cpp`, etc.)
    - Les issues ouvertes créées par l'utilisateur, exclues si taggées `jules`
-5. **Upload le fichier** converti nativement en **Google Docs** dans le dossier `github` sur Google Drive (créé automatiquement)
+5. **Upload le fichier** `.md` dans un sous-dossier `github/<owner>/` sur Google Drive (créé automatiquement). Les repos sont organisés par owner/organisation.
 
 ### Flux d'authentification
 
@@ -72,7 +72,9 @@ github-to-drive/
 ├── sync.py              # Script principal de synchronisation
 ├── requirements.txt     # Dépendances Python
 ├── README.md            # Ce fichier
-└── .gitignore           # Fichiers ignorés
+├── .gitignore           # Fichiers ignorés
+└── utils/
+    └── migration_cleaner.py  # Nettoyage Drive (legacy Google Docs, dossiers obsolètes)
 ```
 
 ## Scripts d'entrée principaux
@@ -87,7 +89,7 @@ github-to-drive/
 
 | Commande | Description |
 |----------|-------------|
-| `python3 utils/migration_cleaner.py` | Nettoie le dossier racine Google Drive et convertit les anciens `.md` en Google Docs natifs |
+| `python3 utils/migration_cleaner.py` | Supprime les Google Docs legacy, fichiers orphelins, dossiers d'orgs renommées, et reset le state |
 | `systemctl --user status github-to-drive` | Statut du service |
 | `systemctl --user restart github-to-drive` | Redémarrer le service |
 | `journalctl --user -u github-to-drive -f` | Consulter les logs en temps réel |

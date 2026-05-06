@@ -195,26 +195,13 @@ def get_or_create_folder(service, folder_name="github", parent_id="root"):
 
 
 def upload_or_update_file(service, folder_id, filename, content):
-    """Upload or update a Markdown file in the github folder on Drive, converted to a Google Doc."""
-    # We strip the .md extension to make the Google Doc title cleaner
-    doc_title = filename[:-3] if filename.endswith(".md") else filename
-
+    """Upload or update a raw Markdown file in the github folder on Drive."""
     if service is None:
-        log.info("[DRY-RUN] Would upload/update '%s' as Google Doc on Drive in folder '%s' (%d bytes)",
-                 doc_title, folder_id, len(content.encode("utf-8")))
+        log.info("[DRY-RUN] Would upload/update '%s' on Drive in folder '%s' (%d bytes)",
+                 filename, folder_id, len(content.encode("utf-8")))
         return
 
-    # Google Docs has a ~1.02 million character limit for conversion
-    is_too_large = len(content) > 1_000_000
-    if is_too_large:
-        log.warning("File '%s' exceeds Google Docs 1M characters limit (%d chars). Uploading as raw .md instead.", filename, len(content))
-        target_name = filename  # Keep .md extension
-        target_mime = "text/markdown"
-    else:
-        target_name = doc_title
-        target_mime = "application/vnd.google-apps.document"
-
-    query = f"name='{target_name}' and '{folder_id}' in parents and mimeType='{target_mime}' and trashed=false"
+    query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
     results = (
         service.files()
         .list(q=query, spaces="drive", fields="files(id)")
@@ -230,17 +217,16 @@ def upload_or_update_file(service, folder_id, filename, content):
         service.files().update(
             fileId=existing[0]["id"], media_body=media
         ).execute()
-        log.info("Updated '%s' on Drive", target_name)
+        log.info("Updated '%s' on Drive", filename)
     else:
         metadata = {
-            "name": target_name, 
+            "name": filename,
             "parents": [folder_id],
-            "mimeType": target_mime
         }
         service.files().create(
             body=metadata, media_body=media, fields="id"
         ).execute()
-        log.info("Created '%s' on Drive", target_name)
+        log.info("Created '%s' on Drive", filename)
 
 
 # ---------------------------------------------------------------------------
