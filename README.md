@@ -74,6 +74,7 @@ github-to-drive/
 ├── README.md            # Ce fichier
 ├── .gitignore           # Fichiers ignorés
 └── utils/
+    ├── force_full_sync.py    # Force la synchronisation complète de tous les repos
     └── migration_cleaner.py  # Nettoyage Drive (legacy Google Docs, dossiers obsolètes)
 ```
 
@@ -89,6 +90,7 @@ github-to-drive/
 
 | Commande | Description |
 |----------|-------------|
+| `python3 utils/force_full_sync.py` | Force une synchronisation immédiate de **tous** les repos (ignore les events récents) |
 | `python3 utils/migration_cleaner.py` | Supprime les Google Docs legacy, fichiers orphelins, dossiers d'orgs renommées, et reset le state |
 | `systemctl --user status github-to-drive` | Statut du service |
 | `systemctl --user restart github-to-drive` | Redémarrer le service |
